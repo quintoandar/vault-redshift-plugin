@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"context"
 	"strings"
 	"time"
     "crypto/md5"
@@ -54,7 +55,7 @@ func (p *RedShift) Type() (string, error) {
 }
 
 func (p *RedShift) getConnection() (*sql.DB, error) {
-	db, err := p.Connection()
+	db, err := p.Connection(context.Context)
 	if err != nil {
 		return nil, err
 	}
