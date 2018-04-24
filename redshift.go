@@ -6,16 +6,19 @@ import (
 	"context"
 	"strings"
 	"time"
+	"errors"
     "crypto/md5"
     "encoding/hex"
 
+	"github.com/hashicorp/errwrap"
+	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/builtin/logical/database/dbplugin"
 	"github.com/hashicorp/vault/helper/strutil"
+	"github.com/hashicorp/vault/plugins"
 	"github.com/hashicorp/vault/plugins/helper/database/connutil"
 	"github.com/hashicorp/vault/plugins/helper/database/credsutil"
 	"github.com/hashicorp/vault/plugins/helper/database/dbutil"
 	"github.com/lib/pq"
-	_ "github.com/lib/pq"
 )
 
 const (
@@ -23,10 +26,24 @@ const (
 	defaultRedshiftRenewSQL        = `
 ALTER USER {{name}} VALID UNTIL '{{expiration}}';
 `
+	defaultRotateRootCredentialsSQL  string = `
+ALTER USER "{{name}}" PASSWORD '{{password}}';
+`
+
 )
 
+var _ dbplugin.Database = &RedShift{}
+
 // New implements builtinplugins.BuiltinFactory
-func New() (interface{}) {
+func New() (interface{}, error) {
+	db := new()
+	// Wrap the plugin with middleware to sanitize errors
+	dbType := dbplugin.NewDatabaseErrorSanitizerMiddleware(db, db.SecretValues)
+	return dbType, nil
+}
+
+
+func new() *RedShift {
 	connProducer := &connutil.SQLConnectionProducer{}
 	connProducer.Type = "postgres"
 
@@ -38,15 +55,28 @@ func New() (interface{}) {
 	}
 
 	dbType := &RedShift{
-		ConnectionProducer:  connProducer,
+		SQLConnectionProducer:  connProducer,
 		CredentialsProducer: credsProducer,
 	}
 
 	return dbType
 }
 
+// Run instantiates a RedShift object, and runs the RPC server for the plugin
+func Run(apiTLSConfig *api.TLSConfig) error {
+	dbType, err := New()
+	if err != nil {
+		return err
+	}
+
+	plugins.Serve(dbType.(dbplugin.Database), apiTLSConfig)
+
+	return nil
+}
+
+
 type RedShift struct {
-	connutil.ConnectionProducer
+	*connutil.SQLConnectionProducer
 	credsutil.CredentialsProducer
 }
 
@@ -54,8 +84,8 @@ func (p *RedShift) Type() (string, error) {
 	return redshiftTypeName, nil
 }
 
-func (p *RedShift) getConnection() (*sql.DB, error) {
-	db, err := p.Connection(context.Context)
+func (p *RedShift) getConnection(ctx context.Context) (*sql.DB, error) {
+	db, err := p.Connection(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +93,7 @@ func (p *RedShift) getConnection() (*sql.DB, error) {
 	return db.(*sql.DB), nil
 }
 
-func (p *RedShift) CreateUser(statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, expiration time.Time) (username string, password string, err error) {
+func (p *RedShift) CreateUser(ctx context.Context, statements dbplugin.Statements, usernameConfig dbplugin.UsernameConfig, expiration time.Time) (username string, password string, err error) {
 	if statements.CreationStatements == "" {
 		return "", "", dbutil.ErrEmptyCreationStatement
 	}
@@ -95,14 +125,14 @@ func (p *RedShift) CreateUser(statements dbplugin.Statements, usernameConfig dbp
 	}
 
 	// Get the connection
-	db, err := p.getConnection()
+	db, err := p.getConnection(ctx)
 	if err != nil {
 		return "", "", err
 
 	}
 
 	// Start a transaction
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", "", err
 
@@ -128,7 +158,7 @@ func (p *RedShift) CreateUser(statements dbplugin.Statements, usernameConfig dbp
 
 		}
 		defer stmt.Close()
-		if _, err := stmt.Exec(); err != nil {
+		if _, err := stmt.ExecContext(ctx); err != nil {
 			return "", "", err
 
 		}
@@ -143,7 +173,7 @@ func (p *RedShift) CreateUser(statements dbplugin.Statements, usernameConfig dbp
 	return username, password, nil
 }
 
-func (p *RedShift) RenewUser(statements dbplugin.Statements, username string, expiration time.Time) error {
+func (p *RedShift) RenewUser(ctx context.Context, statements dbplugin.Statements, username string, expiration time.Time) error {
 	p.Lock()
 	defer p.Unlock()
 
@@ -152,12 +182,12 @@ func (p *RedShift) RenewUser(statements dbplugin.Statements, username string, ex
 		renewStmts = defaultRedshiftRenewSQL
 	}
 
-	db, err := p.getConnection()
+	db, err := p.getConnection(ctx)
 	if err != nil {
 		return err
 	}
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -175,7 +205,7 @@ func (p *RedShift) RenewUser(statements dbplugin.Statements, username string, ex
 		if len(query) == 0 {
 			continue
 		}
-		stmt, err := tx.Prepare(dbutil.QueryHelper(query, map[string]string{
+		stmt, err := tx.PrepareContext(ctx, dbutil.QueryHelper(query, map[string]string{
 			"name":       username,
 			"expiration": expirationStr,
 		}))
@@ -184,7 +214,7 @@ func (p *RedShift) RenewUser(statements dbplugin.Statements, username string, ex
 		}
 
 		defer stmt.Close()
-		if _, err := stmt.Exec(); err != nil {
+		if _, err := stmt.ExecContext(ctx); err != nil {
 			return err
 		}
 	}
@@ -196,25 +226,25 @@ func (p *RedShift) RenewUser(statements dbplugin.Statements, username string, ex
 	return nil
 }
 
-func (p *RedShift) RevokeUser(statements dbplugin.Statements, username string) error {
+func (p *RedShift) RevokeUser(ctx context.Context, statements dbplugin.Statements, username string) error {
 	// Grab the lock
 	p.Lock()
 	defer p.Unlock()
 
 	if statements.RevocationStatements == "" {
-		return p.defaultRevokeUser(username)
+		return p.defaultRevokeUser(ctx, username)
 	}
 
-	return p.customRevokeUser(username, statements.RevocationStatements)
+	return p.customRevokeUser(ctx, username, statements.RevocationStatements)
 }
 
-func (p *RedShift) customRevokeUser(username, revocationStmts string) error {
-	db, err := p.getConnection()
+func (p *RedShift) customRevokeUser(ctx context.Context, username, revocationStmts string) error {
+	db, err := p.getConnection(ctx)
 	if err != nil {
 		return err
 	}
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -228,7 +258,7 @@ func (p *RedShift) customRevokeUser(username, revocationStmts string) error {
 			continue
 		}
 
-		stmt, err := tx.Prepare(dbutil.QueryHelper(query, map[string]string{
+		stmt, err := tx.PrepareContext(ctx, dbutil.QueryHelper(query, map[string]string{
 			"name": username,
 		}))
 		if err != nil {
@@ -236,7 +266,7 @@ func (p *RedShift) customRevokeUser(username, revocationStmts string) error {
 		}
 		defer stmt.Close()
 
-		if _, err := stmt.Exec(); err != nil {
+		if _, err := stmt.ExecContext(ctx); err != nil {
 			return err
 		}
 	}
@@ -258,15 +288,15 @@ select distinct schemaname from (
 `
 )
 
-func (p *RedShift) defaultRevokeUser(username string) error {
-	db, err := p.getConnection()
+func (p *RedShift) defaultRevokeUser(ctx context.Context, username string) error {
+	db, err := p.getConnection(ctx)
 	if err != nil {
 		return err
 	}
 
 	// Check if the user exists
 	var exists bool
-	err = db.QueryRow("SELECT exists (SELECT usename FROM pg_user WHERE usename=$1);", username).Scan(&exists)
+	err = db.QueryRowContext(ctx, "SELECT exists (SELECT usename FROM pg_user WHERE usename=$1);", username).Scan(&exists)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
@@ -279,13 +309,13 @@ func (p *RedShift) defaultRevokeUser(username string) error {
 	// the role
 	// This isn't done in a transaction because even if we fail along the way,
 	// we want to remove as much access as possible
-	stmt, err := db.Prepare("select 'alter table '+schemaname+'.'+tablename+' owner to rdsdb;' as sql from pg_tables where tableowner like $1;")
+	stmt, err := db.PrepareContext(ctx, "select 'alter table '+schemaname+'.'+tablename+' owner to rdsdb;' as sql from pg_tables where tableowner like $1;")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
-	rows, err := stmt.Query(username)
+	rows, err := stmt.QueryContext(ctx, username)
 	if err != nil {
 		return err
 	}
@@ -303,14 +333,14 @@ func (p *RedShift) defaultRevokeUser(username string) error {
 		revocationStmts = append(revocationStmts, sql)
 	}
 	
-	stmt, err = db.Prepare(fmt.Sprintf(`select 'revoke all on schema '+schemaname+' from %s;' as sql from (%s);`,
+	stmt, err = db.PrepareContext(ctx, fmt.Sprintf(`select 'revoke all on schema '+schemaname+' from %s;' as sql from (%s);`,
 									   username,
 									   rs_revoke_sql))
 	if err != nil {
 		return err
 	}
 
-	rows, err = stmt.Query()
+	rows, err = stmt.QueryContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -325,14 +355,14 @@ func (p *RedShift) defaultRevokeUser(username string) error {
 		revocationStmts = append(revocationStmts, sql)
 	}
 
-	stmt, err = db.Prepare(fmt.Sprintf(`select 'revoke all on all tables in schema '+schemaname+' from %s;' as sql from (%s);`,
+	stmt, err = db.PrepareContext(ctx, fmt.Sprintf(`select 'revoke all on all tables in schema '+schemaname+' from %s;' as sql from (%s);`,
 									   username,
 									   rs_revoke_sql))
 	if err != nil {
 		return err
 	}
 
-	rows, err = stmt.Query()
+	rows, err = stmt.QueryContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -351,13 +381,13 @@ func (p *RedShift) defaultRevokeUser(username string) error {
 	// many permissions as possible right now
 	var lastStmtError error
 	for _, query := range revocationStmts {
-		stmt, err := db.Prepare(query)
+		stmt, err := db.PrepareContext(ctx, query)
 		if err != nil {
 			lastStmtError = err
 			continue
 		}
 		defer stmt.Close()
-		_, err = stmt.Exec()
+		_, err = stmt.ExecContext(ctx)
 		if err != nil {
 			lastStmtError = err
 		}
@@ -365,22 +395,89 @@ func (p *RedShift) defaultRevokeUser(username string) error {
 
 	// can't drop if not all privileges are revoked
 	if rows.Err() != nil {
-		return fmt.Errorf("could not generate revocation statements for all rows: %s", rows.Err())
+		return errwrap.Wrapf("could not generate revocation statements for all rows: %s", rows.Err())
 	}
 	if lastStmtError != nil {
-		return fmt.Errorf("could not perform all revocation statements: %s", lastStmtError)
+		return errwrap.Wrapf("could not perform all revocation statements: %s", lastStmtError)
 	}
 
 	// Drop this user
-	stmt, err = db.Prepare(fmt.Sprintf(
+	stmt, err = db.PrepareContext(ctx, fmt.Sprintf(
 		`DROP USER %s;`, pq.QuoteIdentifier(username)))
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
-	if _, err := stmt.Exec(); err != nil {
+	if _, err := stmt.ExecContext(ctx); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (p *RedShift) RotateRootCredentials(ctx context.Context, statements []string) (map[string]interface{}, error) {
+	p.Lock()
+	defer p.Unlock()
+
+	if (p.Username == "" || p.Password == "") {
+		return nil, errors.New("username and password are required to rotate")
+	}
+	
+
+	rotateStatents := defaultRotateRootCredentialsSQL
+
+	db, err := p.getConnection(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		tx.Rollback()
+	}()
+
+	password, err := p.GeneratePassword()
+	if err != nil {
+		return nil, err
+	}
+
+	pwdMD5 := md5.New()
+    pwdMD5.Write([]byte(password));
+    pwdMD5.Write([]byte(p.Username));
+    passwordMD5  := "md5" + hex.EncodeToString(pwdMD5.Sum(nil))
+	
+	
+	for _, query := range strutil.ParseArbitraryStringSlice(rotateStatents, ";") {
+		query = strings.TrimSpace(query)
+		if len(query) == 0 {
+			continue
+		}
+		stmt, err := tx.PrepareContext(ctx, dbutil.QueryHelper(query, map[string]string{
+			"name":       p.Username,
+			"password":   passwordMD5,
+		}))
+		if err != nil {
+			return nil, err
+		}
+
+		defer stmt.Close()
+		if _, err := stmt.ExecContext(ctx); err != nil {
+			return nil, err
+		}
+	}
+	
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	// Close the database connection to ensure no new connections come in
+	if err := db.Close(); err != nil {
+		return nil, err
+	}
+
+	p.RawConfig["password"] = passwordMD5
+	return p.RawConfig, nil
 }
