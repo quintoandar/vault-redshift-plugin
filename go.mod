@@ -26,7 +26,6 @@ require (
 	github.com/hashicorp/go-rootcerts v1.0.1 // indirect
 	github.com/hashicorp/go-version v1.2.0 // indirect
 	github.com/hashicorp/vault v0.8.0
-	github.com/hashicorp/vault/api v1.0.2 // indirect
 	github.com/jefferai/jsonx v1.0.0 // indirect
 	github.com/keybase/go-crypto v0.0.0-20190416182011-b785b22cc757 // indirect
 	github.com/lib/pq v1.1.1
