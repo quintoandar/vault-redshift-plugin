@@ -19,18 +19,28 @@ require (
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/go-sql-driver/mysql v1.4.1 // indirect
 	github.com/gocql/gocql v0.0.0-20190708145057-55a38e15c5db // indirect
+	github.com/gogo/protobuf v1.2.1 // indirect
 	github.com/golang/protobuf v1.3.2 // indirect
+	github.com/golang/snappy v0.0.1 // indirect
+	github.com/googleapis/gax-go/v2 v2.0.5 // indirect
 	github.com/gotestyourself/gotestyourself v2.2.0+incompatible // indirect
+	github.com/hashicorp/errwrap v1.0.0
+	github.com/hashicorp/go-cleanhttp v0.5.1 // indirect
 	github.com/hashicorp/go-hclog v0.9.2 // indirect
 	github.com/hashicorp/go-immutable-radix v1.1.0 // indirect
 	github.com/hashicorp/go-plugin v1.0.1 // indirect
+	github.com/hashicorp/go-retryablehttp v0.5.4 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.1 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.2 // indirect
+	github.com/hashicorp/go-uuid v1.0.1 // indirect
 	github.com/hashicorp/go-version v1.2.0 // indirect
+	github.com/hashicorp/golang-lru v0.5.1 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/hashicorp/vault v1.1.3
 	github.com/jefferai/jsonx v1.0.0 // indirect
 	github.com/keybase/go-crypto v0.0.0-20190416182011-b785b22cc757 // indirect
+	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
+	github.com/kr/pty v1.1.8 // indirect
 	github.com/lib/pq v1.1.1
 	github.com/mattn/go-colorable v0.1.2 // indirect
 	github.com/mgutz/ansi v0.0.0-20170206155736-9520e82c474b // indirect
@@ -40,13 +50,20 @@ require (
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
 	github.com/opencontainers/image-spec v1.0.1 // indirect
 	github.com/opencontainers/runc v0.1.1 // indirect
+	github.com/openzipkin/zipkin-go v0.1.7 // indirect
 	github.com/ory/dockertest v3.3.4+incompatible // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
+	github.com/posener/complete v1.1.2 // indirect
+	github.com/prometheus/client_golang v0.9.4 // indirect
+	github.com/prometheus/procfs v0.0.3 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sethgrid/pester v0.0.0-20190127155807-68a33a018ad0 // indirect
+	go.opencensus.io v0.20.2 // indirect
 	golang.org/x/crypto v0.0.0-20190701094942-4def268fd1a4 // indirect
 	golang.org/x/net v0.0.0-20190628185345-da137c7871d7 // indirect
 	golang.org/x/sys v0.0.0-20190712062909-fae7ac547cb7 // indirect
+	golang.org/x/text v0.3.2 // indirect
+	google.golang.org/api v0.3.2 // indirect
 	google.golang.org/grpc v1.22.0 // indirect
 	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce // indirect
 	gopkg.in/ory-am/dockertest.v3 v3.3.4 // indirect
