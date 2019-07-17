@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
+	"crypto/md5"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
-    "crypto/md5"
-    "encoding/hex"
 
 	"github.com/hashicorp/vault/builtin/logical/database/dbplugin"
 	"github.com/hashicorp/vault/helper/strutil"
@@ -18,14 +19,14 @@ import (
 )
 
 const (
-	redshiftTypeName      string = "redshift"
+	redshiftTypeName        string = "redshift"
 	defaultRedshiftRenewSQL        = `
 ALTER USER {{name}} VALID UNTIL '{{expiration}}';
 `
 )
 
 // New implements builtinplugins.BuiltinFactory
-func New() (interface{}) {
+func New() interface{} {
 	connProducer := &connutil.SQLConnectionProducer{}
 	connProducer.Type = "postgres"
 
@@ -54,7 +55,11 @@ func (p *RedShift) Type() (string, error) {
 }
 
 func (p *RedShift) getConnection() (*sql.DB, error) {
-	db, err := p.Connection()
+
+	// We could pass context.WithTimeout to give a maximum timeout and allow
+	// cancelling the context in case of error, but for now I don't want to
+	// risk any big changes
+	db, err := p.Connection(context.TODO())
 	if err != nil {
 		return nil, err
 	}
@@ -75,19 +80,19 @@ func (p *RedShift) CreateUser(statements dbplugin.Statements, usernameConfig dbp
 	if err != nil {
 		return "", "", err
 	}
-    
-    username = strings.ToLower(username)
+
+	username = strings.ToLower(username)
 	username = strings.Replace(username, "-", "_", -1)
 
 	password, err = p.GeneratePassword()
 	if err != nil {
 		return "", "", err
 	}
-    
-    pwdMD5 := md5.New()
-    pwdMD5.Write([]byte(password));
-    pwdMD5.Write([]byte(username));
-    passwordMD5  := "md5" + hex.EncodeToString(pwdMD5.Sum(nil))
+
+	pwdMD5 := md5.New()
+	pwdMD5.Write([]byte(password))
+	pwdMD5.Write([]byte(username))
+	passwordMD5 := "md5" + hex.EncodeToString(pwdMD5.Sum(nil))
 	expirationStr, err := p.GenerateExpiration(expiration)
 	if err != nil {
 		return "", "", err
@@ -138,7 +143,7 @@ func (p *RedShift) CreateUser(statements dbplugin.Statements, usernameConfig dbp
 		return "", "", err
 
 	}
-    
+
 	return username, password, nil
 }
 
@@ -248,7 +253,7 @@ func (p *RedShift) customRevokeUser(username, revocationStmts string) error {
 }
 
 const (
-    rs_revoke_sql string = `
+	rs_revoke_sql string = `
 select distinct schemaname from (
   select QUOTE_IDENT(schemaname) as schemaname FROM pg_tables WHERE schemaname not in ('pg_internal') 
   union 
@@ -301,10 +306,10 @@ func (p *RedShift) defaultRevokeUser(username string) error {
 		}
 		revocationStmts = append(revocationStmts, sql)
 	}
-	
+
 	stmt, err = db.Prepare(fmt.Sprintf(`select 'revoke all on schema '+schemaname+' from %s;' as sql from (%s);`,
-									   username,
-									   rs_revoke_sql))
+		username,
+		rs_revoke_sql))
 	if err != nil {
 		return err
 	}
@@ -325,8 +330,8 @@ func (p *RedShift) defaultRevokeUser(username string) error {
 	}
 
 	stmt, err = db.Prepare(fmt.Sprintf(`select 'revoke all on all tables in schema '+schemaname+' from %s;' as sql from (%s);`,
-									   username,
-									   rs_revoke_sql))
+		username,
+		rs_revoke_sql))
 	if err != nil {
 		return err
 	}
@@ -345,7 +350,7 @@ func (p *RedShift) defaultRevokeUser(username string) error {
 		}
 		revocationStmts = append(revocationStmts, sql)
 	}
-	
+
 	// again, here, we do not stop on error, as we want to remove as
 	// many permissions as possible right now
 	var lastStmtError error

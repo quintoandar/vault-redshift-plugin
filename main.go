@@ -1,9 +1,16 @@
 package main
 
 import (
-    "github.com/hashicorp/vault/plugins"
+	"os"
+
+	"github.com/hashicorp/vault/helper/pluginutil"
+	"github.com/hashicorp/vault/plugins"
 )
 
 func main() {
-	plugins.Serve(New().(*RedShift), nil)
+	apiClientMeta := &pluginutil.APIClientMeta{}
+	flags := apiClientMeta.FlagSet()
+	flags.Parse(os.Args)
+
+	plugins.Serve(New().(*RedShift), apiClientMeta.GetTLSConfig())
 }
