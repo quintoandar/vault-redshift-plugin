@@ -1,14 +1,14 @@
 package main
 
 import (
-	"database/sql"
-	"fmt"
 	"context"
+	"crypto/md5"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
-	"errors"
-    "crypto/md5"
-    "encoding/hex"
 
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/api"
@@ -22,14 +22,13 @@ import (
 )
 
 const (
-	redshiftTypeName      string = "redshift"
+	redshiftTypeName        string = "redshift"
 	defaultRedshiftRenewSQL        = `
 ALTER USER {{name}} VALID UNTIL '{{expiration}}';
 `
-	defaultRotateRootCredentialsSQL  string = `
+	defaultRotateRootCredentialsSQL string = `
 ALTER USER "{{name}}" PASSWORD '{{password}}';
 `
-
 )
 
 var _ dbplugin.Database = &RedShift{}
@@ -41,7 +40,6 @@ func New() (interface{}, error) {
 	dbType := dbplugin.NewDatabaseErrorSanitizerMiddleware(db, db.SecretValues)
 	return dbType, nil
 }
-
 
 func new() *RedShift {
 	connProducer := &connutil.SQLConnectionProducer{}
@@ -55,8 +53,8 @@ func new() *RedShift {
 	}
 
 	dbType := &RedShift{
-		SQLConnectionProducer:  connProducer,
-		CredentialsProducer: credsProducer,
+		SQLConnectionProducer: connProducer,
+		CredentialsProducer:   credsProducer,
 	}
 
 	return dbType
@@ -73,7 +71,6 @@ func Run(apiTLSConfig *api.TLSConfig) error {
 
 	return nil
 }
-
 
 type RedShift struct {
 	*connutil.SQLConnectionProducer
@@ -106,19 +103,19 @@ func (p *RedShift) CreateUser(ctx context.Context, statements dbplugin.Statement
 	if err != nil {
 		return "", "", err
 	}
-    
-    username = strings.ToLower(username)
+
+	username = strings.ToLower(username)
 	username = strings.Replace(username, "-", "_", -1)
 
 	password, err = p.GeneratePassword()
 	if err != nil {
 		return "", "", err
 	}
-    
-    pwdMD5 := md5.New()
-    pwdMD5.Write([]byte(password));
-    pwdMD5.Write([]byte(username));
-    passwordMD5  := "md5" + hex.EncodeToString(pwdMD5.Sum(nil))
+
+	pwdMD5 := md5.New()
+	pwdMD5.Write([]byte(password))
+	pwdMD5.Write([]byte(username))
+	passwordMD5 := "md5" + hex.EncodeToString(pwdMD5.Sum(nil))
 	expirationStr, err := p.GenerateExpiration(expiration)
 	if err != nil {
 		return "", "", err
@@ -169,7 +166,7 @@ func (p *RedShift) CreateUser(ctx context.Context, statements dbplugin.Statement
 		return "", "", err
 
 	}
-    
+
 	return username, password, nil
 }
 
@@ -279,7 +276,7 @@ func (p *RedShift) customRevokeUser(ctx context.Context, username, revocationStm
 }
 
 const (
-    rs_revoke_sql string = `
+	rs_revoke_sql string = `
 select distinct schemaname from (
   select QUOTE_IDENT(schemaname) as schemaname FROM pg_tables WHERE schemaname not in ('pg_internal') 
   union 
@@ -332,10 +329,10 @@ func (p *RedShift) defaultRevokeUser(ctx context.Context, username string) error
 		}
 		revocationStmts = append(revocationStmts, sql)
 	}
-	
+
 	stmt, err = db.PrepareContext(ctx, fmt.Sprintf(`select 'revoke all on schema '+schemaname+' from %s;' as sql from (%s);`,
-									   username,
-									   rs_revoke_sql))
+		username,
+		rs_revoke_sql))
 	if err != nil {
 		return err
 	}
@@ -356,8 +353,8 @@ func (p *RedShift) defaultRevokeUser(ctx context.Context, username string) error
 	}
 
 	stmt, err = db.PrepareContext(ctx, fmt.Sprintf(`select 'revoke all on all tables in schema '+schemaname+' from %s;' as sql from (%s);`,
-									   username,
-									   rs_revoke_sql))
+		username,
+		rs_revoke_sql))
 	if err != nil {
 		return err
 	}
@@ -376,7 +373,7 @@ func (p *RedShift) defaultRevokeUser(ctx context.Context, username string) error
 		}
 		revocationStmts = append(revocationStmts, sql)
 	}
-	
+
 	// again, here, we do not stop on error, as we want to remove as
 	// many permissions as possible right now
 	var lastStmtError error
@@ -419,10 +416,9 @@ func (p *RedShift) RotateRootCredentials(ctx context.Context, statements []strin
 	p.Lock()
 	defer p.Unlock()
 
-	if (p.Username == "" || p.Password == "") {
+	if p.Username == "" || p.Password == "" {
 		return nil, errors.New("username and password are required to rotate")
 	}
-	
 
 	rotateStatents := defaultRotateRootCredentialsSQL
 
@@ -445,19 +441,18 @@ func (p *RedShift) RotateRootCredentials(ctx context.Context, statements []strin
 	}
 
 	pwdMD5 := md5.New()
-    pwdMD5.Write([]byte(password));
-    pwdMD5.Write([]byte(p.Username));
-    passwordMD5  := "md5" + hex.EncodeToString(pwdMD5.Sum(nil))
-	
-	
+	pwdMD5.Write([]byte(password))
+	pwdMD5.Write([]byte(p.Username))
+	passwordMD5 := "md5" + hex.EncodeToString(pwdMD5.Sum(nil))
+
 	for _, query := range strutil.ParseArbitraryStringSlice(rotateStatents, ";") {
 		query = strings.TrimSpace(query)
 		if len(query) == 0 {
 			continue
 		}
 		stmt, err := tx.PrepareContext(ctx, dbutil.QueryHelper(query, map[string]string{
-			"name":       p.Username,
-			"password":   passwordMD5,
+			"name":     p.Username,
+			"password": passwordMD5,
 		}))
 		if err != nil {
 			return nil, err
@@ -468,7 +463,7 @@ func (p *RedShift) RotateRootCredentials(ctx context.Context, statements []strin
 			return nil, err
 		}
 	}
-	
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
